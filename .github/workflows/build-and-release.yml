@@ -174,28 +174,34 @@ jobs:
             [ -n "$JAR" ] && EXTRA+=("$JAR")
           done
 
+          # Release notes are written to a file: a multi-line string with
+          # unindented lines would break the YAML block scalar of this step.
+          cat > release-notes.md <<EOF
+          ## Orbital Railgun Enhanced v${VERSION}
+
+          ### Universal JAR (recommended)
+          Download \`$(basename "$MERGED")\` - one file for all supported Minecraft versions.
+
+          ### Supported Minecraft versions
+          | Subproject | Covers |
+          |---|---|
+          | 1.20.4 | 1.20 / 1.20.1 / 1.20.2 / 1.20.3 / 1.20.4 |
+          | 1.20.5 | 1.20.5 |
+          | 1.20.6 | 1.20.6 |
+
+          ### Required mods
+          - [Fabric Loader](https://fabricmc.net/use/installer/)
+          - [Fabric API](https://modrinth.com/mod/fabric-api)
+          - [GeckoLib](https://modrinth.com/mod/geckolib)
+          - [Satin API](https://modrinth.com/mod/satin)
+          - [owo-lib](https://modrinth.com/mod/owo-lib)
+
+          ---
+          *Per-version JARs are also attached below for reference.*
+          EOF
+
           gh release create "v${VERSION}" \
             --title "v${VERSION}" \
-            --notes "## Orbital Railgun Enhanced v${VERSION}
-
-### 📦 Universal JAR (recommended)
-Download \`$(basename "$MERGED")\` — one file for all supported Minecraft versions.
-
-### ✅ Supported Minecraft versions
-| Subproject | Covers |
-|---|---|
-| 1.20.4 | 1.20 · 1.20.1 · 1.20.2 · 1.20.3 · 1.20.4 |
-| 1.20.5 | 1.20.5 |
-| 1.20.6 | 1.20.6 |
-
-### 📋 Required mods
-- [Fabric Loader](https://fabricmc.net/use/installer/)
-- [Fabric API](https://modrinth.com/mod/fabric-api)
-- [GeckoLib](https://modrinth.com/mod/geckolib)
-- [Satin API](https://modrinth.com/mod/satin)
-- [owo-lib](https://modrinth.com/mod/owo-lib)
-
----
-*Per-version JARs are also attached below for reference.*" \
+            --notes-file release-notes.md \
             "$MERGED" \
             "${EXTRA[@]}"
