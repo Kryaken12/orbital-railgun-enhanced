@@ -1,0 +1,197 @@
+// Root project build file - delegates to version subprojects
+// This project does not build anything itself; all builds are done through version subprojects
+
+plugins {
+    id 'base'
+}
+
+// Get only the version subprojects (not the intermediate 'versions' project)
+def versionProjects = subprojects.findAll { it.path.startsWith(':versions:') && it.path.count(':') == 2 }
+// 26.1.2 uses Mojang mappings and is distributed as a standalone JAR, so it
+// must never be folded into the legacy Yarn-mapped universal artifact.
+def legacyVersionProjects = versionProjects.findAll { it.path != ':versions:26.1.2' }
+
+// Configure processResources for all version subprojects.
+// fabric.mod.json lives in common/src/main/resources/ and is included in each
+// version's resources via srcDirs. The ${version} placeholder is expanded here
+// using the mod_version from the root gradle.properties.
+configure(versionProjects) {
+    afterEvaluate {
+        // Ensure the version JAR tasks run after cleanVersionLibs so that
+        // parallel Gradle execution never writes a fresh JAR into a directory
+        // that cleanVersionLibs has not yet cleared.
+        tasks.matching { it.name == 'remapJar' || it.name == 'build' }.configureEach {
+            mustRunAfter rootProject.tasks.named('cleanVersionLibs')
+        }
+        processResources {
+            duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+            inputs.property "version", rootProject.mod_version
+            filteringCharset = "UTF-8"
+            filesMatching("fabric.mod.json") {
+                expand "version": rootProject.mod_version
+            }
+        }
+    }
+}
+
+// Wipes stale JARs from version subproject build/libs/ before any version is built.
+// Without this, bumping mod_version leaves the old JAR alongside the new one and
+// mergeJars picks up both, causing the wrong version's classes to win deduplication.
+tasks.register('cleanStaleJars') {
+    description = 'Removes stale JARs from version and root build directories before a new build'
+    group = 'build'
+    doLast {
+        // Clean each version subproject JAR output (source for mergeJars)
+        versionProjects.each { proj ->
+            def libsDir = proj.file('build/libs')
+            if (libsDir.exists()) {
+                def stale = fileTree(libsDir) { include '*.jar' }.files
+                stale.each { it.delete() }
+                if (!stale.isEmpty())
+                    logger.lifecycle("> Removed ${stale.size()} stale JAR(s) from ${proj.path}/build/libs/")
+            }
+        }
+        // Also clean the aggregated root libs/ so copyJars doesn't leave old copies around
+        def rootLibs = layout.buildDirectory.dir('libs').get().asFile
+        if (rootLibs.exists()) {
+            def stale = fileTree(rootLibs) {
+                include '*.jar'
+                exclude 'merged/**'   // mergeJars output — overwritten anyway, but leave it alone
+            }.files
+            stale.each { it.delete() }
+            if (!stale.isEmpty())
+                logger.lifecycle("> Removed ${stale.size()} stale JAR(s) from root build/libs/")
+        }
+    }
+}
+
+// Removes stale JARs from every version subproject's build/libs before a
+// fresh build so mergeJars never accidentally picks up a JAR from a
+// previous mod version (e.g. 1.3.8 leftovers when building 1.4.0).
+tasks.register('cleanVersionLibs') {
+    description = 'Deletes stale JARs from version subproject build/libs directories'
+    group = 'build'
+    doLast {
+        versionProjects.each { proj ->
+            def libsDir = proj.file('build/libs')
+            if (libsDir.exists()) {
+                def stale = fileTree(libsDir) {
+                    include '*.jar'
+                    exclude '*-sources.jar'
+                    exclude '*-dev.jar'
+                }.files
+                stale.each { jar ->
+                    jar.delete()
+                    logger.lifecycle("[cleanVersionLibs] Removed stale JAR: ${jar.name}")
+                }
+                if (stale.empty) {
+                    logger.lifecycle("[cleanVersionLibs] ${proj.name}: nothing to clean")
+                }
+            }
+        }
+    }
+}
+
+// Aggregate task to build all versions
+tasks.register('buildAll') {
+    description = 'Builds all Minecraft version subprojects'
+    group = 'build'
+    dependsOn 'cleanVersionLibs'
+    dependsOn legacyVersionProjects.collect { "${it.path}:build" }
+}
+
+// Task to copy built JARs from version subprojects to root build/libs
+tasks.register('copyJars') {
+    description = 'Copies built JARs from version subprojects to root build/libs'
+    group = 'build'
+    dependsOn buildAll
+
+    inputs.files legacyVersionProjects.collect { "${it.projectDir}/build/libs" }
+    outputs.dir layout.buildDirectory.dir("libs")
+
+    doLast {
+        def outputDir = layout.buildDirectory.dir("libs").get().asFile.absolutePath
+        file(outputDir).mkdirs()
+
+        legacyVersionProjects.each { proj ->
+            def libsDir = file("${proj.projectDir}/build/libs")
+            if (libsDir.exists()) {
+                ant.copy(todir: outputDir) {
+                    fileset(dir: libsDir.absolutePath) {
+                        include(name: "*.jar")
+                        exclude(name: "*-sources.jar")
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Merge all version JARs into a single universal JAR
+// ─────────────────────────────────────────────────────────────────────────────
+// Common classes appear in every version JAR with identical bytecode;
+// DuplicatesStrategy.EXCLUDE keeps one copy. Version-specific classes live in
+// unique packages (impl.v1192, impl.v1204, impl.v1206) so all are included
+// without conflict. AdapterLoader picks the right one at runtime via Class.forName.
+//
+// Local usage:  ./gradlew build         (copyJars builds all, then mergeJars runs)
+// CI usage:     ./gradlew mergeJars     (JARs pre-restored by workflow before this call)
+tasks.register('mergeJars', Jar) {
+    description = 'Merges all version JARs into one universal JAR'
+    group = 'build'
+
+    archiveBaseName    = rootProject.archives_base_name
+    archiveVersion     = rootProject.mod_version
+    archiveClassifier  = 'all'
+    destinationDirectory = layout.buildDirectory.dir("libs/merged")
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    // Declare inputs so Gradle's incremental-build system knows when to re-run.
+    // This mirrors the from() sources below; versionProjects is resolved eagerly
+    // here (just directory references, not file contents) which is safe.
+    inputs.files(versionProjects.collect { proj ->
+        fileTree("${proj.projectDir}/build/libs") {
+            include '*.jar'
+            exclude '*-sources.jar'
+            exclude '*-dev.jar'
+        }
+    })
+
+    // provider{} defers file-tree enumeration to execution time so configuration
+    // does not fail when JARs have not been built yet.
+    ['1.20.6', '1.20.5', '1.20.4'].each { mc ->
+        def libsDir = project(":versions:${mc}").file('build/libs')
+        from(provider {
+            fileTree(libsDir) {
+                include '*.jar'
+                exclude '*-sources.jar'
+                exclude '*-dev.jar'
+            }.collect { zipTree(it) }
+        })
+    }
+
+    from(rootProject.file('LICENSE'))
+}
+
+// Full local build: build → copyJars (builds all versions) → mergeJars (finalizer).
+copyJars.finalizedBy mergeJars
+build.dependsOn copyJars
+
+// Aggregate task to clean all versions
+tasks.register('cleanAll') {
+    description = 'Cleans all Minecraft version subprojects'
+    group = 'build'
+    dependsOn versionProjects.collect { "${it.path}:clean" }
+}
+
+// build.dependsOn cleanAll
+clean.dependsOn cleanAll
+
+// Aggregate task to run tests in all versions
+tasks.register('testAll') {
+    description = 'Runs tests in all Minecraft version subprojects'
+    group = 'verification'
+    dependsOn legacyVersionProjects.collect { "${it.path}:test" }
+}

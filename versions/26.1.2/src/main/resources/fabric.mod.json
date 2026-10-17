@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "orbital_railgun_enhanced",
+  "version": "${version}",
+  "name": "Orbital Railgun Enhanced",
+  "description": "Destroy your enemies with an orbital strike, but with sounds and more features!",
+  "authors": ["KingIronMan2011"],
+  "contact": {
+    "issues": "https://github.com/KingIronMan2011/orbital-railgun-enhanced/issues",
+    "sources": "https://github.com/KingIronMan2011/orbital-railgun-enhanced"
+  },
+  "license": "MIT",
+  "icon": "assets/orbital_railgun_enhanced/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "client": ["io.github.kingironman2011.orbital_railgun_enhanced.client.OrbitalRailgunClient"],
+    "main": ["io.github.kingironman2011.orbital_railgun_enhanced.OrbitalRailgun"],
+    "owo": ["io.github.kingironman2011.orbital_railgun_enhanced.client.config.EnhancedConfig"]
+  },
+  "mixins": [
+    "orbital_railgun_enhanced.mixins.json",
+    {"config": "orbital_railgun_enhanced.client.mixins.json", "environment": "client"}
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "fabric-api": ">=0.146.1+26.1.2",
+    "minecraft": ">=26.1 <=26.1.2",
+    "java": ">=25",
+    "owo-lib": ">=0.13.0+26.1"
+  },
+  "suggests": {"sound_physics_remastered": "*", "dynamicsurroundings": "*"}
+}

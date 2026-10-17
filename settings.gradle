@@ -1,0 +1,29 @@
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+            content {
+                includeGroup 'net.fabricmc'
+                includeGroup 'fabric-loom'
+                includeGroup 'net.fabricmc.fabric-loom'
+                includeGroup 'net.fabricmc.unpick'
+            }
+        }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'orbital-railgun-enhanced'
+
+// Include version-specific subprojects
+// All three subprojects are merged into a single universal JAR via mergeJars.
+// To add a new MC version: add a new subproject here, create versions/<mc>/,
+// and add a package entry to AdapterLoader.resolvePackage().
+include 'versions:1.20.4'
+include 'versions:1.20.5'
+include 'versions:1.20.6'
+// Minecraft 26 uses Mojang mappings, so this target is a standalone artifact
+// and is intentionally excluded from the legacy merged JAR below.
+include 'versions:26.1.2'
+include 'versions:26.1.2'
